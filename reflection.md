@@ -7,6 +7,21 @@
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
 
+1. Manage Pet & Owner Information
+
+- Users can enter and update basic details about themselves and their pets (name, type, age, special needs, etc.).
+- This ensures the schedule is personalized to each pet’s needs.
+
+2. Add and Edit Tasks
+
+- Users can create, update, and prioritize tasks for each pet (walks, feeding, meds, grooming, enrichment).
+- Each task should include at least duration and priority, and optionally constraints like time windows or frequency.
+
+3. Generate a Daily Schedule
+
+- The app produces a daily plan that accounts for task priorities, durations, and constraints.
+- It can explain why each task was scheduled at a particular time, helping owners understand and trust the plan.
+
 **b. Design changes**
 
 - Did your design change during implementation?
