@@ -130,30 +130,25 @@ st.subheader("Build Schedule")
 st.caption("This button should call your scheduling logic once you implement it.")
 
 if st.button("Generate schedule"):
-    # Build pets from session state
+    # ── Build Task objects from session state ─────────────────────────────────
     pets_map = {p.name: p for p in st.session_state.pets}
 
-    priority_map = {"low": 1, "medium": 2, "high": 3}
+    priority_map = {"low": 3, "medium": 6, "high": 9}
     period_slots = {
-        "Morning": TimeSlot(startTime=time(7, 0), endTime=time(10, 0)),
+        "Morning":   TimeSlot(startTime=time(7, 0),  endTime=time(10, 0)),
         "Afternoon": TimeSlot(startTime=time(12, 0), endTime=time(17, 0)),
-        "Evening": TimeSlot(startTime=time(17, 0), endTime=time(20, 0)),
+        "Evening":   TimeSlot(startTime=time(17, 0), endTime=time(20, 0)),
     }
 
     for t in st.session_state.tasks:
         pet_name_for_task = t.get("pet_name")
         if pet_name_for_task not in pets_map:
             continue
-
-        duration_td = timedelta(minutes=int(t["duration_minutes"]))
-        preferred_time = None
-        if t.get("preferred_period") in period_slots:
-            preferred_time = period_slots[t["preferred_period"]]
-
+        preferred_time = period_slots.get(t.get("preferred_period"))
         task = Task(
             name=t["title"],
-            duration=duration_td,
-            priority=priority_map.get(t.get("priority", "low"), 1),
+            duration=timedelta(minutes=int(t["duration_minutes"])),
+            priority=priority_map.get(t.get("priority", "low"), 3),
             pet=pets_map[pet_name_for_task],
             preferredTime=preferred_time,
         )
@@ -161,17 +156,61 @@ if st.button("Generate schedule"):
 
     scheduler = Scheduler(owner=owner, pets=list(pets_map.values()))
     schedule = scheduler.generateDailySchedule()
+    scheduled_tasks = schedule.getTasks()
 
-    if schedule.getTasks():
-        st.success("Schedule generated!")
-        for stask in schedule.getTasks():
-            st.write(
-                f"{stask.startTime.strftime('%I:%M %p')} - {stask.endTime.strftime('%I:%M %p')} : "
-                f"{stask.task.pet.name} - {stask.task.name} (priority {stask.task.priority})"
-            )
+    if not scheduled_tasks:
+        st.warning("No tasks could be scheduled with current availability and preferences.")
+        st.stop()
 
-        st.markdown("### Plan Explanation")
-        for line in schedule.explainSchedule().splitlines():
-            st.markdown(f"- {line}")
+    # ── Conflict warnings ─────────────────────────────────────────────────────
+    conflicts = schedule.detect_conflicts()
+    if conflicts:
+        st.error(
+            f"**{len(conflicts)} scheduling conflict(s) detected.** "
+            "Two or more tasks overlap — your pet may not get the care they need. "
+            "Adjust task durations, preferred periods, or owner availability to fix this."
+        )
+        for conflict in conflicts:
+            # conflict string: "Conflict: 'Walk' (Baxter) 09:00 AM-09:30 AM overlaps with ..."
+            parts = conflict.removeprefix("Conflict: ").split(" overlaps with ")
+            if len(parts) == 2:
+                st.warning(
+                    f"**Overlap:** {parts[0].strip()}  \n"
+                    f"**conflicts with:** {parts[1].strip()}  \n"
+                    "_Tip: shorten one task or move it to a different period._"
+                )
+            else:
+                st.warning(conflict)
     else:
-        st.warning("No tasks could be scheduled with current availability/prefs.")
+        st.success(
+            f"Schedule generated — {len(scheduled_tasks)} task(s) placed with no conflicts."
+        )
+
+    # ── Priority order (from Scheduler.sortTasks) ─────────────────────────────
+    all_tasks = [st_task.task for st_task in scheduled_tasks]
+    sorted_by_priority = scheduler.sortTasks(all_tasks)
+    priority_order = ", ".join(
+        f"{t.name} ({t.pet.name})" for t in sorted_by_priority
+    )
+    st.caption(f"Priority order used: {priority_order}")
+
+    # ── Schedule table ────────────────────────────────────────────────────────
+    st.markdown("### Today's Schedule")
+    st.table([
+        {
+            "Time": (
+                f"{st_task.startTime.strftime('%I:%M %p')} – "
+                f"{st_task.endTime.strftime('%I:%M %p')}"
+            ),
+            "Pet": st_task.task.pet.name,
+            "Task": st_task.task.name,
+            "Priority": st_task.task.priority,
+            "Duration": f"{int(st_task.task.duration.total_seconds() // 60)} min",
+        }
+        for st_task in scheduled_tasks
+    ])
+
+    # ── Plan explanation ──────────────────────────────────────────────────────
+    with st.expander("Why was this schedule chosen?", expanded=False):
+        explanation = schedule.explainSchedule(owner.availableTimeSlots)
+        st.info(explanation)

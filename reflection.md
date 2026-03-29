@@ -142,8 +142,9 @@ classDiagram
         - contactInfo: string
         - availableTimeSlots: List<TimeSlot>
         - preferences: Map<String, Any>
-        + updateAvailability(newSlots: List<TimeSlot>)
-        + updatePreferences(preferences: Map<String, Any>)
+        - constraints: List~Constraint~
+        + updateAvailability(newSlots: List<TimeSlot>): void
+        + updatePreferences(preferences: Map): void
         + getConstraints(): List<Constraint>
     }
 
@@ -166,18 +167,22 @@ classDiagram
         - preferredTime: Optional<TimeSlot>
         - pet: Pet
         - completed: boolean
-        + markCompleted()
-        + updateTask(details: Map<String, Any>)
+        - dueDate: Optional<Date>
+        - recurrence: Optional<String>
+        - constraints: List<Constraint>
+        + markCompleted(today: Date): Optional<Task>
+        + updateTask(details: Map<String, Any>): void
         + isDue(today: Date): boolean
     }
 
     class Schedule {
         - date: Date
         - scheduledTasks: List<ScheduledTask>
-        + addScheduledTask(task: ScheduledTask)
-        + removeScheduledTask(taskId: string)
+        + addScheduledTask(task: ScheduledTask): void
+        + removeScheduledTask(taskId: string): void
         + getTasks(): List<ScheduledTask>
-        + explainSchedule(): string
+        + detect_conflicts(): List<String>
+        + explainSchedule(availableSlots: Optional<List<TimeSlot>>): String
     }
 
     class ScheduledTask {
@@ -191,10 +196,15 @@ classDiagram
     class Scheduler {
         - owner: Owner
         - pets: List<Pet>
-        + generateDailySchedule(): Schedule
-        + sortTasksByPriority(tasks: List<Task>): List<Task>
-        + fitTasksIntoTimeSlots(tasks: List<Task>, timeSlots: List<TimeSlot>): Schedule
-        + explainDecision(task: Task): string
+        + generateDailySchedule(today: Date): Schedule
+        + sortTasks(tasks: List<Task>): List<Task>
+        + apply_constraints(tasks: List<Task>): List<Task>
+        + fitTasksIntoTimeSlots(tasks, slots): Schedule
+        + complete_task(taskName: String, today: Date): Optional<Task>
+        + get_pending_tasks(): List<Task>
+        + get_completed_tasks(): List<Task>
+        + get_due_today_tasks(today: Date): List<Task>
+        + explainDecision(task: Task): String
     }
 
     class TimeSlot {
@@ -202,6 +212,7 @@ classDiagram
         - endTime: Time
         + overlapsWith(other: TimeSlot): boolean
         + duration(): Duration
+        + formatted(): String
     }
 
     class Constraint {
@@ -220,6 +231,8 @@ classDiagram
     ScheduledTask "1" -- "1" Task : wraps >
     Owner "1" -- "*" Constraint : constraints >
     Task "0..*" -- "*" Constraint : isBoundBy >
+    Owner "1" o-- "*" TimeSlot : availableTimeSlots
+    Task "1" --> "1" Pet : pet
 ```
 
 **a. Initial design**
@@ -277,6 +290,10 @@ For the \_find_fit() function in the Scheduler class, it originally had nested l
 - How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
 - What kinds of prompts or questions were most helpful?
 
+I used Copilot and Claude throughout the project for design brainstorming, debugging, and refactoring. In the early stages, I used AI to help brainstorm the system design, including identifying the main classes and their responsibilities. As I started implementing the scheduler, I relied on AI to debug issues where the logic was technically correct but produced unexpected or unintuitive results, such as tasks being scheduled in ways that didn’t align with real-world expectations. I also used AI to refactor and simplify algorithms, especially in areas like fitting tasks into time slots and generating explanations. AI helped me identify places where my logic was overly complex or repetitive and suggested cleaner, more readable approaches.
+
+The most helpful prompts were specific and structured, especially when I clearly described both the problem and the desired outcome.
+
 **b. Judgment and verification**
 
 - Describe one moment where you did not accept an AI suggestion as-is.
@@ -291,10 +308,29 @@ For the \_find_fit() function in the Scheduler class, it originally had nested l
 - What behaviors did you test?
 - Why were these tests important?
 
+I wrote eight tests covering three core areas of the scheduler.
+
+For **task lifecycle**, I tested that `markCompleted()` correctly flips the `completed` flag, and that `addTask()` adds to the pet's task list. These were important because the rest of the system depends on completed tasks being excluded from the daily schedule — if that flag wasn't set correctly, tasks would repeat forever or never clear.
+
+For **recurrence**, I tested that completing a daily task returns a new task due exactly the next calendar day, and that the scheduler's `complete_task()` method appends that new instance to the pet. I also specifically tested on a Sunday to make sure there was no weekday bias. These tests mattered because recurrence is easy to get subtly wrong — off-by-one errors in date math would silently produce a task due on the wrong day.
+
+For **sorting**, I tested that `sortTasks()` returns tasks in priority-descending order, breaking ties by pet name then preferred start time. This was important because the entire scheduling algorithm depends on sort order — if high-priority tasks weren't placed first, lower-priority tasks could take the best time slots.
+
+For **conflict detection**, I tested two boundary cases: overlapping tasks should produce exactly one conflict message naming both tasks, and back-to-back tasks (where one ends exactly when the next begins) should produce no conflict. The back-to-back case was especially important because the conflict check uses a strict `<` comparison, and getting that boundary wrong would flood the owner with false warnings.
+
 **b. Confidence**
 
 - How confident are you that your scheduler works correctly?
 - What edge cases would you test next if you had more time?
+
+I'm moderately confident (about 3 out of 5). The behaviors I tested all pass and cover the logic a pet owner interacts with most directly. However, I'm less confident in the parts I didn't test directly. The slot-fitting algorithm (`_find_fit` and `fitTasksIntoTimeSlots`) is only exercised indirectly through `generateDailySchedule`, so I haven't verified edge cases like a task that exactly fills the last remaining slot, or two tasks with overlapping preferred windows competing for the same interval.
+
+If I had more time, the next tests I would write are:
+
+- A task whose duration exactly equals the remaining free time — does it fit or get dropped?
+- Weekly recurrence: a task with `recurrence='weekly'` should only appear on the matching weekday and be absent on all other days.
+- The `notNight` constraint with a task that starts just before 10 PM — verifying the boundary is enforced correctly.
+- Completing the same task twice — the second call should be ignored and should not spawn a second recurring instance.
 
 ---
 
@@ -304,10 +340,16 @@ For the \_find_fit() function in the Scheduler class, it originally had nested l
 
 - What part of this project are you most satisfied with?
 
+I'm satisfied I got the core scheduling logic working properly on both the frontend and backend. It recognizes overlapping tasks and potential conflicts. On the backend specifically, it does a great job with scheduling within the owner's availability. I'm proud that I was able to use AI to correct minor bugs I saw in the UI and now the schedule is more easier to understand.
+
 **b. What you would improve**
 
 - If you had another iteration, what would you improve or redesign?
 
+For the UI, I would've loved to add more features such as inputting availability instead of solely having it in the backend. Another minor thing I would improve is the format of the explanation because everything is in one paragraph and depending on the number of tasks being added it can be a lot to take in.
+
 **c. Key takeaway**
 
 - What is one important thing you learned about designing systems or working with AI on this project?
+
+While working on the scheduling logic, I realized that even when the system produced a technically correct schedule, it could still feel “wrong” if it didn’t align with human expectations, such as how time blocks are interpreted or how tasks are explained. This became especially clear when the explanation didn’t match the actual scheduling behavior. I also learned that when working with AI tools like Copilot, being very specific in prompts is crucial. Vague instructions led to unclear or misleading explanations, but once I clearly defined structure, constraints, and expected output, the results improved significantly.
