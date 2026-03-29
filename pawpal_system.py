@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import date, time, timedelta
+from datetime import date, time, timedelta, datetime
 from typing import List, Dict, Optional, Any
 
 @dataclass
@@ -8,11 +8,20 @@ class TimeSlot:
     endTime: time
 
     def overlapsWith(self, other: 'TimeSlot') -> bool:
-        pass
+        """Return True if this TimeSlot overlaps another."""
+        return self.startTime < other.endTime and other.startTime < self.endTime
 
     def duration(self) -> timedelta:
-        pass
+        """Return the duration of this TimeSlot."""
+        start_dt = datetime.combine(date.min, self.startTime)
+        end_dt = datetime.combine(date.min, self.endTime)
+        if end_dt < start_dt:
+            end_dt += timedelta(days=1)
+        return end_dt - start_dt
 
+    def formatted(self) -> str:
+        """Return this TimeSlot as a formatted AM/PM string."""
+        return f"{self.startTime.strftime('%I:%M %p')} - {self.endTime.strftime('%I:%M %p')}"
 
 @dataclass
 class Constraint:
@@ -20,11 +29,23 @@ class Constraint:
     details: Dict[str, Any]
 
     def appliesTo(self, task: 'Task') -> bool:
-        pass
+        """Return True if this constraint applies to the given task."""
+        if self.type == 'pet' and 'petName' in self.details:
+            return task.pet.name == self.details['petName']
+        if self.type == 'priority' and 'minPriority' in self.details:
+            return task.priority >= self.details['minPriority']
+        if self.type == 'taskName' and 'pattern' in self.details:
+            return self.details['pattern'].lower() in task.name.lower()
+        return True
 
     def isSatisfied(self, timeSlot: TimeSlot) -> bool:
-        pass
-
+        """Return True if this constraint is satisfied by a given TimeSlot."""
+        if self.type == 'availableWindow' and 'slot' in self.details:
+            constraint_slot = self.details['slot']
+            return constraint_slot.startTime <= timeSlot.startTime and timeSlot.endTime <= constraint_slot.endTime
+        if self.type == 'notNight' and self.details.get('enabled', False):
+            return not (timeSlot.startTime >= time(22, 0) or timeSlot.endTime <= time(6, 0))
+        return True
 
 @dataclass
 class Task:
@@ -34,16 +55,21 @@ class Task:
     pet: 'Pet'
     preferredTime: Optional[TimeSlot] = None
     completed: bool = False
+    constraints: List[Constraint] = field(default_factory=list)
 
     def markCompleted(self) -> None:
-        pass
+        """Mark this task as completed."""
+        self.completed = True
 
     def updateTask(self, details: Dict[str, Any]) -> None:
-        pass
+        """Update task fields from a dictionary."""
+        for key, value in details.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
 
     def isDue(self, today: date) -> bool:
-        pass
-
+        """Return True if the task is still due."""
+        return not self.completed
 
 @dataclass
 class Pet:
@@ -54,17 +80,22 @@ class Pet:
     tasks: List[Task] = field(default_factory=list)
 
     def addTask(self, task: Task) -> None:
-        pass
+        """Add a new task to this pet."""
+        self.tasks.append(task)
 
     def removeTask(self, taskId: str) -> None:
-        pass
+        """Remove a task by its name."""
+        self.tasks = [t for t in self.tasks if t.name != taskId]
 
     def getTasks(self) -> List[Task]:
-        pass
+        """Return the list of tasks for this pet."""
+        return self.tasks
 
     def updatePetInfo(self, info: Dict[str, Any]) -> None:
-        pass
-
+        """Update pet details from a dict."""
+        for key, value in info.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
 
 @dataclass
 class Owner:
@@ -72,16 +103,22 @@ class Owner:
     contactInfo: str
     availableTimeSlots: List[TimeSlot] = field(default_factory=list)
     preferences: Dict[str, Any] = field(default_factory=dict)
+    constraints: List[Constraint] = field(default_factory=list)
 
     def updateAvailability(self, newSlots: List[TimeSlot]) -> None:
-        pass
+        """Set owner's available TimeSlots."""
+        self.availableTimeSlots = newSlots
 
     def updatePreferences(self, preferences: Dict[str, Any]) -> None:
-        pass
+        """Merge new preferences into existing preferences."""
+        self.preferences.update(preferences)
 
     def getConstraints(self) -> List[Constraint]:
-        pass
-
+        """Return owner constraints, including preference-derived constraints."""
+        combined = list(self.constraints)
+        if 'minPriority' in self.preferences:
+            combined.append(Constraint('priority', {'minPriority': self.preferences['minPriority']}))
+        return combined
 
 @dataclass
 class ScheduledTask:
@@ -90,11 +127,19 @@ class ScheduledTask:
     endTime: time
 
     def reschedule(self, newStartTime: time) -> None:
-        pass
+        """Reschedule this task to start at a new time."""
+        duration = self.getDuration()
+        self.startTime = newStartTime
+        end_dt = datetime.combine(date.min, newStartTime) + duration
+        self.endTime = end_dt.time()
 
     def getDuration(self) -> timedelta:
-        pass
-
+        """Return the duration between start and end times."""
+        start_dt = datetime.combine(date.min, self.startTime)
+        end_dt = datetime.combine(date.min, self.endTime)
+        if end_dt < start_dt:
+            end_dt += timedelta(days=1)
+        return end_dt - start_dt
 
 @dataclass
 class Schedule:
@@ -102,17 +147,23 @@ class Schedule:
     scheduledTasks: List[ScheduledTask] = field(default_factory=list)
 
     def addScheduledTask(self, task: ScheduledTask) -> None:
-        pass
+        """Add a scheduled task to this daily schedule."""
+        self.scheduledTasks.append(task)
 
     def removeScheduledTask(self, taskId: str) -> None:
-        pass
+        """Remove a scheduled task by task name."""
+        self.scheduledTasks = [s for s in self.scheduledTasks if s.task.name != taskId]
 
     def getTasks(self) -> List[ScheduledTask]:
-        pass
+        """Return the list of scheduled tasks."""
+        return self.scheduledTasks
 
     def explainSchedule(self) -> str:
-        pass
-
+        """Return a human-readable timeline of scheduled tasks."""
+        lines = []
+        for st in sorted(self.scheduledTasks, key=lambda x: x.startTime):
+            lines.append(f"{st.startTime.strftime('%I:%M %p')} - {st.endTime.strftime('%I:%M %p')}: {st.task.pet.name} - {st.task.name}")
+        return '\n'.join(lines)
 
 @dataclass
 class Scheduler:
@@ -120,13 +171,80 @@ class Scheduler:
     pets: List[Pet] = field(default_factory=list)
 
     def generateDailySchedule(self) -> Schedule:
-        pass
+        """Generate a schedule for the day based on owner availability and tasks."""
+        all_tasks = [t for pet in self.pets for t in pet.tasks if not t.completed]
+        tasks = self.sortTasksByPriority(all_tasks)
+        return self.fitTasksIntoTimeSlots(tasks, self.owner.availableTimeSlots)
 
     def sortTasksByPriority(self, tasks: List[Task]) -> List[Task]:
-        pass
+        """Return tasks sorted by descending priority."""
+        return sorted(tasks, key=lambda t: t.priority, reverse=True)
+
+    def _subtract_slot(self, free_slots: List[TimeSlot], used: TimeSlot) -> List[TimeSlot]:
+        """Return free slots with the used slot removed."""
+        result = []
+        for slot in free_slots:
+            if not slot.overlapsWith(used):
+                result.append(slot)
+                continue
+            if slot.startTime < used.startTime:
+                result.append(TimeSlot(slot.startTime, used.startTime))
+            if used.endTime < slot.endTime:
+                result.append(TimeSlot(used.endTime, slot.endTime))
+        return result
+
+    def _find_fit(self, task: Task, free_slots: List[TimeSlot]) -> Optional[ScheduledTask]:
+        """Return a ScheduledTask that fits the given task in free slots, or None."""
+        duration_minutes = int(task.duration.total_seconds() / 60)
+
+        def can_fit(interval: TimeSlot, start_time: time) -> bool:
+            start_dt = datetime.combine(date.min, start_time)
+            end_dt = start_dt + task.duration
+            end_time = end_dt.time()
+            if end_dt.date() > date.min:
+                end_time = time(23, 59)
+            return TimeSlot(start_time, end_time).duration() >= task.duration
+
+        for slot in sorted(free_slots, key=lambda s: s.startTime):
+            if task.preferredTime:
+                if not slot.overlapsWith(task.preferredTime):
+                    continue
+
+                pref_start = max(slot.startTime, task.preferredTime.startTime)
+                end_dt = datetime.combine(date.min, pref_start) + task.duration
+                candidate_slot = TimeSlot(pref_start, end_dt.time())
+
+                if can_fit(slot, pref_start) and all(c.appliesTo(task) and c.isSatisfied(candidate_slot) for c in self.owner.getConstraints() + task.constraints):
+                    return ScheduledTask(task, pref_start, end_dt.time())
+
+                continue
+
+            preferred_start = slot.startTime
+            if can_fit(slot, preferred_start):
+                end_dt = datetime.combine(date.min, preferred_start) + task.duration
+                candidate_slot = TimeSlot(preferred_start, end_dt.time())
+                if all(c.appliesTo(task) and c.isSatisfied(candidate_slot) for c in self.owner.getConstraints() + task.constraints):
+                    return ScheduledTask(task, preferred_start, end_dt.time())
+
+        return None
 
     def fitTasksIntoTimeSlots(self, tasks: List[Task], timeSlots: List[TimeSlot]) -> Schedule:
-        pass
+        """Fill the schedule by placing tasks into available time slots."""
+        schedule = Schedule(date.today())
+        free_slots = sorted(timeSlots, key=lambda x: x.startTime)
+
+        for task in tasks:
+            scheduled = self._find_fit(task, free_slots)
+            if scheduled:
+                schedule.addScheduledTask(scheduled)
+                used = TimeSlot(scheduled.startTime, scheduled.endTime)
+                free_slots = self._subtract_slot(free_slots, used)
+
+        return schedule
 
     def explainDecision(self, task: Task) -> str:
-        pass
+        """Explain why a specific task was scheduled or not."""
+        if task.completed:
+            return f"Task '{task.name}' for {task.pet.name} is already completed."
+        preferred_str = task.preferredTime.formatted() if task.preferredTime else 'No preference'
+        return f"Task '{task.name}' for {task.pet.name} has priority {task.priority} and preferred time {preferred_str}."
