@@ -56,6 +56,8 @@ class Task:
     preferredTime: Optional[TimeSlot] = None
     completed: bool = False
     constraints: List[Constraint] = field(default_factory=list)
+    dueDate: Optional[date] = None
+    recurrence: Optional[str] = None  # 'daily', 'weekly', or None
 
     def markCompleted(self) -> None:
         """Mark this task as completed."""
@@ -68,8 +70,19 @@ class Task:
                 setattr(self, key, value)
 
     def isDue(self, today: date) -> bool:
-        """Return True if the task is still due."""
-        return not self.completed
+        """Return True if the task is due today or still pending."""
+        if self.completed:
+            return False
+
+        if self.recurrence == 'daily':
+            return True
+        if self.recurrence == 'weekly':
+            return today.weekday() == (self.dueDate.weekday() if self.dueDate else today.weekday())
+
+        if self.dueDate is None:
+            return True
+
+        return self.dueDate <= today
 
 @dataclass
 class Pet:
@@ -158,7 +171,21 @@ class Schedule:
         """Return the list of scheduled tasks."""
         return self.scheduledTasks
 
-    def explainSchedule(self) -> str:
+    def detect_conflicts(self) -> List[str]:
+        """Detect overlapping scheduled tasks in this schedule."""
+        conflicts = []
+        sorted_tasks = sorted(self.scheduledTasks, key=lambda st: st.startTime)
+        for i in range(len(sorted_tasks) - 1):
+            current = sorted_tasks[i]
+            nxt = sorted_tasks[i + 1]
+            if current.endTime > nxt.startTime:
+                conflicts.append(
+                    f"Conflict: '{current.task.name}' ({current.task.pet.name}) ending at {current.endTime.strftime('%I:%M %p')} "
+                    f"overlaps with '{nxt.task.name}' ({nxt.task.pet.name}) starting at {nxt.startTime.strftime('%I:%M %p')}"
+                )
+        return conflicts
+
+    def explainSchedule_old(self) -> str:
         """Return a concise, personalized paragraph explaining schedule generation."""
         if not self.scheduledTasks:
             return "No tasks were scheduled because no matching available slots were found."
@@ -185,28 +212,129 @@ class Schedule:
             "Preferred time ranges were respected when provided" +
             (" (one or more preferred slots used)." if pref_used else " (no preferred times were set).")
         )
+        conflicts = self.detect_conflicts()
+        conflict_text = (
+            f" There are {len(conflicts)} conflict(s): {conflicts[0]}" if conflicts else ""
+        )
+
         sentence4 = (
             "Lower-priority tasks for "
             f"{', '.join(sorted({st.task.pet.name for st in low_priority})) or 'no pets'} were placed afterward and may be delayed "
             "if the day is fully booked."
         )
 
-        return " ".join([sentence1, sentence2, sentence3, sentence4])
+        return " ".join([sentence1, sentence2, sentence3, sentence4]) + conflict_text
+
+    def explainSchedule(self, available_slots: Optional[List[TimeSlot]] = None) -> str:
+        """Return a concise human-readable explanation of the generated schedule."""
+        if not self.scheduledTasks:
+            if available_slots:
+                blocks = ", ".join(slot.formatted() for slot in sorted(available_slots, key=lambda s: s.startTime))
+                return f"No tasks were scheduled. Owner availability blocks were: {blocks}."
+            return "No tasks were scheduled because no matching available slots were found."
+
+        by_time = sorted(self.scheduledTasks, key=lambda st: st.startTime)
+        by_priority = sorted(self.scheduledTasks, key=lambda st: (-st.task.priority, st.startTime))
+
+        all_pets = sorted({st.task.pet.name for st in self.scheduledTasks})
+        low_tasks = [st for st in by_priority if st.task.priority < 8]
+
+        lines = [
+            f"Scheduled {len(self.scheduledTasks)} tasks for {', '.join(all_pets)}.",
+            f"Priority order: {', '.join([f'{st.task.name} ({st.task.pet.name})' for st in by_priority])}.",
+            "High-priority tasks are scheduled before lower-priority tasks within available blocks.",
+        ]
+
+        if available_slots:
+            sorted_slots = sorted(available_slots, key=lambda s: s.startTime)
+            slot_text = ", ".join(slot.formatted() for slot in sorted_slots)
+            lines.append(f"Owner availability blocks: {slot_text}.")
+
+            gaps = []
+            for block in sorted_slots:
+                block_tasks = [st for st in by_time if st.startTime >= block.startTime and st.endTime <= block.endTime]
+                cursor = block.startTime
+                for st in block_tasks:
+                    if cursor < st.startTime:
+                        gaps.append(TimeSlot(cursor, st.startTime))
+                    cursor = max(cursor, st.endTime)
+                if cursor < block.endTime:
+                    gaps.append(TimeSlot(cursor, block.endTime))
+
+            if gaps:
+                gap_text = ", ".join(g.formatted() for g in gaps)
+                lines.append(f"Gaps inside availability blocks: {gap_text}.")
+            else:
+                lines.append("No gaps detected inside availability blocks.")
+        else:
+            first_slot = by_time[0]
+            last_slot = by_time[-1]
+            lines.append(
+                f"Tasks span from {first_slot.startTime.strftime('%I:%M %p')} "
+                f"to {last_slot.endTime.strftime('%I:%M %p')} and may have implicit gaps between tasks."
+            )
+
+        lines.append("Scheduled tasks in chronological order:")
+        for st in by_time:
+            lines.append(
+                f"- {st.startTime.strftime('%I:%M %p')} to {st.endTime.strftime('%I:%M %p')}: "
+                f"{st.task.name} ({st.task.pet.name}, priority {st.task.priority})"
+            )
+
+        if low_tasks:
+            lines.append(f"Lower-priority tasks included: {', '.join([st.task.name for st in low_tasks])}.")
+
+        conflicts = self.detect_conflicts()
+        if conflicts:
+            lines.append(f"Conflicts detected ({len(conflicts)}): {', '.join(conflicts)}")
+
+        return " ".join(lines)
 
 @dataclass
 class Scheduler:
     owner: Owner
     pets: List[Pet] = field(default_factory=list)
 
-    def generateDailySchedule(self) -> Schedule:
+    def generateDailySchedule(self, today: Optional[date] = None) -> Schedule:
         """Generate a schedule for the day based on owner availability and tasks."""
-        all_tasks = [t for pet in self.pets for t in pet.tasks if not t.completed]
-        tasks = self.sortTasksByPriority(all_tasks)
+        if today is None:
+            today = date.today()
+
+        all_tasks = [t for pet in self.pets for t in pet.tasks if not t.completed and t.isDue(today)]
+        constraint_tasks = self.apply_constraints(all_tasks)
+        tasks = self.sortTasks(constraint_tasks)
         return self.fitTasksIntoTimeSlots(tasks, self.owner.availableTimeSlots)
 
-    def sortTasksByPriority(self, tasks: List[Task]) -> List[Task]:
-        """Return tasks sorted by descending priority."""
-        return sorted(tasks, key=lambda t: t.priority, reverse=True)
+    def sortTasks(self, tasks: List[Task]) -> List[Task]:
+        """Return tasks sorted by priority, pet name, and preferred start time."""
+        def key(t: Task):
+            preferred_start = t.preferredTime.startTime if t.preferredTime else time(0, 0)
+            return (-t.priority, t.pet.name.lower(), preferred_start)
+
+        return sorted(tasks, key=key)
+
+    def apply_constraints(self, tasks: List[Task]) -> List[Task]:
+        """Filter tasks by owner and task constraints."""
+        owner_constraints = self.owner.getConstraints()
+        return [t for t in tasks if all(c.appliesTo(t) for c in owner_constraints + t.constraints)]
+
+    def get_tasks_by_pet(self, pet_name: str) -> List[Task]:
+        """Return all tasks across all pets matching this pet name."""
+        return [t for pet in self.pets if pet.name == pet_name for t in pet.tasks]
+
+    def get_pending_tasks(self) -> List[Task]:
+        """Return all pending tasks across pets."""
+        return [t for pet in self.pets for t in pet.tasks if not t.completed]
+
+    def get_completed_tasks(self) -> List[Task]:
+        """Return all completed tasks across pets."""
+        return [t for pet in self.pets for t in pet.tasks if t.completed]
+
+    def get_due_today_tasks(self, today: Optional[date] = None) -> List[Task]:
+        """Return all tasks due today."""
+        if today is None:
+            today = date.today()
+        return [t for pet in self.pets for t in pet.tasks if t.isDue(today)]
 
     def _subtract_slot(self, free_slots: List[TimeSlot], used: TimeSlot) -> List[TimeSlot]:
         """Return free slots with the used slot removed."""
