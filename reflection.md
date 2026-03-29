@@ -139,6 +139,7 @@ Methods:
 classDiagram
     class Owner {
         - name: string
+        - contactInfo: string
         - availableTimeSlots: List<TimeSlot>
         - preferences: Map<String, Any>
         + updateAvailability(newSlots: List<TimeSlot>)
@@ -226,10 +227,28 @@ classDiagram
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
 
+The Owner class stores the owner’s name, contact information, preferences, and a list of available time slots, and it provides methods to update availability and preferences and to return active constraints.
+
+The Pet class stores a pet’s name, type, age, special needs, and task list, and it provides methods to add or remove tasks, return the pet’s tasks, and update the pet information.
+
+The Task class stores task details including name, duration, priority, optional time constraints, associated pet, and completion state, and it provides methods to mark the task complete, update task fields, and check whether the task is due today.
+
+The TimeSlot class stores a start and end time for a window, and it provides methods to check if two slots overlap and to calculate its duration.
+
+The Constraint class stores a constraint type and details, and it provides methods to check whether a constraint applies to a given task and whether it is satisfied by a proposed time slot.
+
+The SchedulerTask class stores a concrete scheduled task, including the source task and start/end times, and it provides methods to reschedule and calculate the scheduled duration.
+
+The Schedule class stores one date and a list of scheduled tasks, and it provides methods to add or remove scheduled tasks, return the list, and explain the full schedule.
+
+The Scheduler class stores the owner and their pets, and it provides methods to generate the daily schedule, sort tasks by priority, fit tasks into available time slots, and explain scheduling decisions.
+
 **b. Design changes**
 
 - Did your design change during implementation?
 - If yes, describe at least one change and why you made it.
+
+One key change was how I handled time constraints for tasks. Initially, I modeled this as a direct relationship between Task and TimeSlot. During implementation, I realized this added unnecessary complexity and overlap with scheduling logic. So, I simplified it by replacing that relationship with a preferredTime attribute inside the Task class. This made the model cleaner and kept the responsibility of actual time assignment within the Scheduler, where it belongs. I also adjusted the relationship between Owner and TimeSlot. Instead of modeling it as a many-to-many relationship, I simplified it to the owner just having a list of available time slots. This better reflects real-world usage and avoids overengineering.
 
 ---
 

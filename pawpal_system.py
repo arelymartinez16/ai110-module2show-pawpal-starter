@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import date, time, timedelta
-from typing import List, Map, Optional, Any
+from typing import List, Dict, Optional, Any
 
 @dataclass
 class TimeSlot:
@@ -17,7 +17,7 @@ class TimeSlot:
 @dataclass
 class Constraint:
     type: str
-    details: Map[str, Any]
+    details: Dict[str, Any]
 
     def appliesTo(self, task: 'Task') -> bool:
         pass
@@ -38,7 +38,7 @@ class Task:
     def markCompleted(self) -> None:
         pass
 
-    def updateTask(self, details: Map[str, Any]) -> None:
+    def updateTask(self, details: Dict[str, Any]) -> None:
         pass
 
     def isDue(self, today: date) -> bool:
@@ -62,20 +62,21 @@ class Pet:
     def getTasks(self) -> List[Task]:
         pass
 
-    def updatePetInfo(self, info: Map[str, Any]) -> None:
+    def updatePetInfo(self, info: Dict[str, Any]) -> None:
         pass
 
 
 @dataclass
 class Owner:
     name: str
+    contactInfo: str
     availableTimeSlots: List[TimeSlot] = field(default_factory=list)
-    preferences: Map[str, Any] = field(default_factory=dict)
+    preferences: Dict[str, Any] = field(default_factory=dict)
 
     def updateAvailability(self, newSlots: List[TimeSlot]) -> None:
         pass
 
-    def updatePreferences(self, preferences: Map[str, Any]) -> None:
+    def updatePreferences(self, preferences: Dict[str, Any]) -> None:
         pass
 
     def getConstraints(self) -> List[Constraint]:
