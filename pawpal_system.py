@@ -159,11 +159,39 @@ class Schedule:
         return self.scheduledTasks
 
     def explainSchedule(self) -> str:
-        """Return a human-readable timeline of scheduled tasks."""
-        lines = []
-        for st in sorted(self.scheduledTasks, key=lambda x: x.startTime):
-            lines.append(f"{st.startTime.strftime('%I:%M %p')} - {st.endTime.strftime('%I:%M %p')}: {st.task.pet.name} - {st.task.name}")
-        return '\n'.join(lines)
+        """Return a concise, personalized paragraph explaining schedule generation."""
+        if not self.scheduledTasks:
+            return "No tasks were scheduled because no matching available slots were found."
+
+        tasks_by_priority = sorted(self.scheduledTasks, key=lambda x: x.task.priority, reverse=True)
+        top_task = tasks_by_priority[0].task
+        pet_names = sorted({st.task.pet.name for st in self.scheduledTasks})
+
+        first_slot = min(self.scheduledTasks, key=lambda st: st.startTime)
+        last_slot = max(self.scheduledTasks, key=lambda st: st.endTime)
+
+        pref_used = [st for st in self.scheduledTasks if st.task.preferredTime]
+        low_priority = [st for st in self.scheduledTasks if st.task.priority < 2]
+
+        sentence1 = (
+            f"Tasks were sorted by priority, so high-priority tasks like '{top_task.name}' for "
+            f"{top_task.pet.name} were given scheduling precedence."
+        )
+        sentence2 = (
+            f"The planner placed each task in the earliest available owner window "
+            f"from {first_slot.startTime.strftime('%I:%M %p')} to {last_slot.endTime.strftime('%I:%M %p')}."
+        )
+        sentence3 = (
+            "Preferred time ranges were respected when provided" +
+            (" (one or more preferred slots used)." if pref_used else " (no preferred times were set).")
+        )
+        sentence4 = (
+            "Lower-priority tasks for "
+            f"{', '.join(sorted({st.task.pet.name for st in low_priority})) or 'no pets'} were placed afterward and may be delayed "
+            "if the day is fully booked."
+        )
+
+        return " ".join([sentence1, sentence2, sentence3, sentence4])
 
 @dataclass
 class Scheduler:
@@ -233,18 +261,29 @@ class Scheduler:
         schedule = Schedule(date.today())
         free_slots = sorted(timeSlots, key=lambda x: x.startTime)
 
-        for task in tasks:
-            scheduled = self._find_fit(task, free_slots)
-            if scheduled:
-                schedule.addScheduledTask(scheduled)
-                used = TimeSlot(scheduled.startTime, scheduled.endTime)
-                free_slots = self._subtract_slot(free_slots, used)
+        remaining_tasks = tasks[:]
+        progress = True
 
+        while progress and remaining_tasks:
+            progress = False
+            for task in list(remaining_tasks):
+                scheduled = self._find_fit(task, free_slots)
+                if scheduled:
+                    schedule.addScheduledTask(scheduled)
+                    used = TimeSlot(scheduled.startTime, scheduled.endTime)
+                    free_slots = self._subtract_slot(free_slots, used)
+                    remaining_tasks.remove(task)
+                    progress = True
+
+        schedule.scheduledTasks.sort(key=lambda st: st.startTime)
         return schedule
 
     def explainDecision(self, task: Task) -> str:
         """Explain why a specific task was scheduled or not."""
         if task.completed:
             return f"Task '{task.name}' for {task.pet.name} is already completed."
-        preferred_str = task.preferredTime.formatted() if task.preferredTime else 'No preference'
-        return f"Task '{task.name}' for {task.pet.name} has priority {task.priority} and preferred time {preferred_str}."
+        if task.preferredTime:
+            pref = f"{task.preferredTime.startTime.strftime('%I:%M %p')} - {task.preferredTime.endTime.strftime('%I:%M %p')}"
+        else:
+            pref = "No preference"
+        return f"Task '{task.name}' for {task.pet.name} has priority {task.priority} and preferred time {pref}."
