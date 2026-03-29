@@ -52,3 +52,40 @@ The following features were added:
 - **Constraint filtering** — `Scheduler.apply_constraints()` filters tasks against both owner-level and task-level constraints (pet name, minimum priority, task name pattern) before scheduling begins.
 - **Scheduler helpers** — Added `get_pending_tasks()`, `get_completed_tasks()`, `get_due_today_tasks()`, and `complete_task()` to support UI and testing needs.
 - **Free-slot tracking** — `fitTasksIntoTimeSlots()` subtracts used time from available slots after each placement, preventing double-booking.
+
+## Testing PawPal+
+
+### Running the tests
+
+```bash
+python -m pytest
+```
+
+To see each test name as it runs:
+
+```bash
+python -m pytest -v
+```
+
+### What the tests cover
+
+| Test                                                       | Area                   | What it checks                                                          |
+| ---------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------- |
+| `test_task_completion_marks_completed`                     | Task lifecycle         | `markCompleted()` flips `completed` to `True`                           |
+| `test_pet_add_task_increases_count`                        | Pet management         | `addTask()` appends to the pet's task list                              |
+| `test_recurring_task_mark_completed_creates_next_instance` | Recurrence             | Completing a daily task returns a new task due the next day             |
+| `test_scheduler_complete_task_appends_recurring`           | Scheduler + recurrence | `complete_task()` marks done and adds the next instance to the pet      |
+| `test_sort_tasks_returns_chronological_order`              | Sorting                | `sortTasks()` orders by priority desc → pet name → preferred start time |
+| `test_daily_recurrence_due_date_advances_by_one_day`       | Recurrence edge case   | Due date advances by exactly one day regardless of weekday              |
+| `test_detect_conflicts_flags_overlapping_tasks`            | Conflict detection     | Overlapping time windows produce a conflict message naming both tasks   |
+| `test_detect_conflicts_no_conflict_for_back_to_back_tasks` | Conflict detection     | Adjacent tasks (end == next start) are not wrongly flagged              |
+
+### Confidence Level
+
+**3 / 5 stars**
+
+The core behaviors are verified and passing. Confidence is limited for these reasons:
+
+- `_find_fit` and `fitTasksIntoTimeSlots` (the actual slot-placement logic) are not directly tested; only the happy path is exercised indirectly through `generateDailySchedule`.
+- The `notNight` and `availableWindow` constraint types have no dedicated tests, so edge cases around midnight-crossing or tight window boundaries are unverified.
+- Weekly recurrence is covered by the existing `isDue` logic but has no test asserting the correct weekday behavior.
