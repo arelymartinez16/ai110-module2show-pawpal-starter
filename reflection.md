@@ -310,13 +310,13 @@ The most helpful prompts were specific and structured, especially when I clearly
 
 I wrote eight tests covering three core areas of the scheduler.
 
-For **task lifecycle**, I tested that `markCompleted()` correctly flips the `completed` flag, and that `addTask()` adds to the pet's task list. These were important because the rest of the system depends on completed tasks being excluded from the daily schedule — if that flag wasn't set correctly, tasks would repeat forever or never clear.
+For **task lifecycle**, I tested that `markCompleted()` correctly flips the `completed` flag, and that `addTask()` adds to the pet's task list. These were important because the rest of the system depends on completed tasks being excluded from the daily schedule. If that flag wasn't set correctly, tasks would repeat forever or never clear.
 
-For **recurrence**, I tested that completing a daily task returns a new task due exactly the next calendar day, and that the scheduler's `complete_task()` method appends that new instance to the pet. I also specifically tested on a Sunday to make sure there was no weekday bias. These tests mattered because recurrence is easy to get subtly wrong — off-by-one errors in date math would silently produce a task due on the wrong day.
+For **recurrence**, I tested that completing a daily task returns a new task due exactly the next calendar day, and that the scheduler's `complete_task()` method appends that new instance to the pet. I also specifically tested on a Sunday to make sure there was no weekday bias. These tests mattered because recurrence is easy to get subtly wrong. Off-by-one errors in date math would silently produce a task due on the wrong day.
 
-For **sorting**, I tested that `sortTasks()` returns tasks in priority-descending order, breaking ties by pet name then preferred start time. This was important because the entire scheduling algorithm depends on sort order — if high-priority tasks weren't placed first, lower-priority tasks could take the best time slots.
+For **sorting**, I tested that `sortTasks()` returns tasks in priority-descending order, breaking ties by pet name then preferred start time. This was important because the entire scheduling algorithm depends on sort order. If high-priority tasks weren't placed first, lower-priority tasks could take the best time slots.
 
-For **conflict detection**, I tested two boundary cases: overlapping tasks should produce exactly one conflict message naming both tasks, and back-to-back tasks (where one ends exactly when the next begins) should produce no conflict. The back-to-back case was especially important because the conflict check uses a strict `<` comparison, and getting that boundary wrong would flood the owner with false warnings.
+For **conflict detection**, I tested two boundary cases: overlapping tasks should produce exactly one conflict message naming both tasks, and back-to-back tasks (where one ends exactly when the next begins) should produce no conflict. The case was especially important because the conflict check uses a strict `<` comparison, and getting that boundary wrong would flood the owner with false warnings.
 
 **b. Confidence**
 
@@ -329,7 +329,7 @@ If I had more time, the next tests I would write are:
 
 - A task whose duration exactly equals the remaining free time — does it fit or get dropped?
 - Weekly recurrence: a task with `recurrence='weekly'` should only appear on the matching weekday and be absent on all other days.
-- The `notNight` constraint with a task that starts just before 10 PM — verifying the boundary is enforced correctly.
+- The `notNight` constraint with a task that starts just before 10 PM, verifying the boundary is enforced correctly.
 - Completing the same task twice — the second call should be ignored and should not spawn a second recurring instance.
 
 ---
