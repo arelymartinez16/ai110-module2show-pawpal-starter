@@ -259,10 +259,14 @@ One key change was how I handled time constraints for tasks. Initially, I modele
 - What constraints does your scheduler consider (for example: time, priority, preferences)?
 - How did you decide which constraints mattered most?
 
+My scheduler considers the owner's availability which is listed in time blocks, meaning a task will not be scheduled outside these windows. High priority tasks are scheduled first within the time blocks. Owners also have the option to select preferences to do a task (e.g. evening walk in the evening so it doesn't get scheduled in the morning nor afternoon). Individual tasks can carry additional constraints (e.g., only apply to a specific pet, or require a minimum priority level) that act as a final filter before a placement is confirmed. Lastly, a slot must be long enough to hold the task's full duration. Slots that are too short are ignored even if they fall within the owner's availability.
+
 **b. Tradeoffs**
 
 - Describe one tradeoff your scheduler makes.
 - Why is that tradeoff reasonable for this scenario?
+
+For the \_find_fit() function in the Scheduler class, it originally had nested logic and repeated constraint checks. It originally had a can_fit() helper method that recomputes things I'm already computing later. That tradeoff sounds reasonable because not only the code is more readable but it also reduced time complexity by removing nested logic.
 
 ---
 

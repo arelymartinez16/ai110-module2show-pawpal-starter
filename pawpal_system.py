@@ -59,9 +59,31 @@ class Task:
     dueDate: Optional[date] = None
     recurrence: Optional[str] = None  # 'daily', 'weekly', or None
 
-    def markCompleted(self) -> None:
-        """Mark this task as completed."""
+    def markCompleted(self, today: Optional[date] = None) -> Optional['Task']:
+        """Mark this task as completed and return the next recurrence instance if any."""
+        if today is None:
+            today = date.today()
+
         self.completed = True
+
+        if self.recurrence not in ('daily', 'weekly'):
+            return None
+
+        next_due = today + timedelta(days=1 if self.recurrence == 'daily' else 7)
+
+        new_task = Task(
+            name=self.name,
+            duration=self.duration,
+            priority=self.priority,
+            pet=self.pet,
+            preferredTime=self.preferredTime,
+            completed=False,
+            constraints=[Constraint(c.type, dict(c.details)) for c in self.constraints],
+            dueDate=next_due,
+            recurrence=self.recurrence,
+        )
+
+        return new_task
 
     def updateTask(self, details: Dict[str, Any]) -> None:
         """Update task fields from a dictionary."""
@@ -174,14 +196,17 @@ class Schedule:
     def detect_conflicts(self) -> List[str]:
         """Detect overlapping scheduled tasks in this schedule."""
         conflicts = []
-        sorted_tasks = sorted(self.scheduledTasks, key=lambda st: st.startTime)
+        sorted_tasks = sorted(self.scheduledTasks, key=lambda st: (st.startTime, st.endTime))
         for i in range(len(sorted_tasks) - 1):
             current = sorted_tasks[i]
             nxt = sorted_tasks[i + 1]
-            if current.endTime > nxt.startTime:
+            # overlap when next task starts before current task ends
+            if nxt.startTime < current.endTime:
                 conflicts.append(
-                    f"Conflict: '{current.task.name}' ({current.task.pet.name}) ending at {current.endTime.strftime('%I:%M %p')} "
-                    f"overlaps with '{nxt.task.name}' ({nxt.task.pet.name}) starting at {nxt.startTime.strftime('%I:%M %p')}"
+                    f"Conflict: '{current.task.name}' ({current.task.pet.name}) "
+                    f"{current.startTime.strftime('%I:%M %p')}-{current.endTime.strftime('%I:%M %p')} "
+                    f"overlaps with '{nxt.task.name}' ({nxt.task.pet.name}) "
+                    f"{nxt.startTime.strftime('%I:%M %p')}-{nxt.endTime.strftime('%I:%M %p')}"
                 )
         return conflicts
 
@@ -336,6 +361,17 @@ class Scheduler:
             today = date.today()
         return [t for pet in self.pets for t in pet.tasks if t.isDue(today)]
 
+    def complete_task(self, task_name: str, today: Optional[date] = None) -> Optional[Task]:
+        """Mark a task complete and create the next recurring instance if applicable."""
+        for pet in self.pets:
+            for task in pet.tasks:
+                if task.name == task_name and not task.completed:
+                    next_task = task.markCompleted(today)
+                    if next_task is not None:
+                        pet.addTask(next_task)
+                    return next_task
+        return None
+
     def _subtract_slot(self, free_slots: List[TimeSlot], used: TimeSlot) -> List[TimeSlot]:
         """Return free slots with the used slot removed."""
         result = []
@@ -351,38 +387,53 @@ class Scheduler:
 
     def _find_fit(self, task: Task, free_slots: List[TimeSlot]) -> Optional[ScheduledTask]:
         """Return a ScheduledTask that fits the given task in free slots, or None."""
-        duration_minutes = int(task.duration.total_seconds() / 60)
-
-        def can_fit(interval: TimeSlot, start_time: time) -> bool:
-            start_dt = datetime.combine(date.min, start_time)
-            end_dt = start_dt + task.duration
-            end_time = end_dt.time()
-            if end_dt.date() > date.min:
-                end_time = time(23, 59)
-            return TimeSlot(start_time, end_time).duration() >= task.duration
-
+        constraints = self.owner.getConstraints() + task.constraints
         for slot in sorted(free_slots, key=lambda s: s.startTime):
-            if task.preferredTime:
-                if not slot.overlapsWith(task.preferredTime):
-                    continue
-
-                pref_start = max(slot.startTime, task.preferredTime.startTime)
-                end_dt = datetime.combine(date.min, pref_start) + task.duration
-                candidate_slot = TimeSlot(pref_start, end_dt.time())
-
-                if can_fit(slot, pref_start) and all(c.appliesTo(task) and c.isSatisfied(candidate_slot) for c in self.owner.getConstraints() + task.constraints):
-                    return ScheduledTask(task, pref_start, end_dt.time())
-
+            if task.preferredTime and not slot.overlapsWith(task.preferredTime):
                 continue
 
-            preferred_start = slot.startTime
-            if can_fit(slot, preferred_start):
-                end_dt = datetime.combine(date.min, preferred_start) + task.duration
-                candidate_slot = TimeSlot(preferred_start, end_dt.time())
-                if all(c.appliesTo(task) and c.isSatisfied(candidate_slot) for c in self.owner.getConstraints() + task.constraints):
-                    return ScheduledTask(task, preferred_start, end_dt.time())
+            start = max(slot.startTime, task.preferredTime.startTime) if task.preferredTime else slot.startTime
+            end_dt = datetime.combine(date.min, start) + task.duration
+            end = end_dt.time()
 
+            candidate = TimeSlot(start, end)
+            if candidate.duration() < task.duration:
+                continue
+            if all(c.appliesTo(task) and c.isSatisfied(candidate) for c in constraints):
+                return ScheduledTask(task, start, end)
         return None
+        # duration_minutes = int(task.duration.total_seconds() / 60)
+
+        # def can_fit(interval: TimeSlot, start_time: time) -> bool:
+        #     start_dt = datetime.combine(date.min, start_time)
+        #     end_dt = start_dt + task.duration
+        #     end_time = end_dt.time()
+        #     if end_dt.date() > date.min:
+        #         end_time = time(23, 59)
+        #     return TimeSlot(start_time, end_time).duration() >= task.duration
+
+        # for slot in sorted(free_slots, key=lambda s: s.startTime):
+        #     if task.preferredTime:
+        #         if not slot.overlapsWith(task.preferredTime):
+        #             continue
+
+        #         pref_start = max(slot.startTime, task.preferredTime.startTime)
+        #         end_dt = datetime.combine(date.min, pref_start) + task.duration
+        #         candidate_slot = TimeSlot(pref_start, end_dt.time())
+
+        #         if can_fit(slot, pref_start) and all(c.appliesTo(task) and c.isSatisfied(candidate_slot) for c in self.owner.getConstraints() + task.constraints):
+        #             return ScheduledTask(task, pref_start, end_dt.time())
+
+        #         continue
+
+        #     preferred_start = slot.startTime
+        #     if can_fit(slot, preferred_start):
+        #         end_dt = datetime.combine(date.min, preferred_start) + task.duration
+        #         candidate_slot = TimeSlot(preferred_start, end_dt.time())
+        #         if all(c.appliesTo(task) and c.isSatisfied(candidate_slot) for c in self.owner.getConstraints() + task.constraints):
+        #             return ScheduledTask(task, preferred_start, end_dt.time())
+
+        # return None
 
     def fitTasksIntoTimeSlots(self, tasks: List[Task], timeSlots: List[TimeSlot]) -> Schedule:
         """Fill the schedule by placing tasks into available time slots."""

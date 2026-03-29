@@ -47,13 +47,14 @@ def main():
     )
     task5 = Task(
         name='Evening Treat',
-        duration=timedelta(minutes=10),
+        duration=timedelta(minutes=20),
         priority=8,
         pet=dog,
-        preferredTime=TimeSlot(startTime=time(18, 15), endTime=time(18, 25)),
+        # intentionally overlapping with Evening Play to validate conflict handling
+        preferredTime=TimeSlot(startTime=time(17, 45), endTime=time(18, 5)),
     )
 
-    # add out of logical timeline order to validate sorting
+    # add out of logical timeline order to validate sorting and conflict detection
     dog.addTask(task3)
     cat.addTask(task2)
     dog.addTask(task1)
@@ -84,9 +85,13 @@ def main():
     for st in today_schedule.getTasks():
         print(f"  {st.startTime.strftime('%I:%M %p')} - {st.endTime.strftime('%I:%M %p')} : {st.task.pet.name} - {st.task.name}")
 
-    print("\nConflicts:")
-    for c in today_schedule.detect_conflicts():
-        print(f"  {c}")
+    conflicts = today_schedule.detect_conflicts()
+    if conflicts:
+        print("\nWARNING: scheduling conflicts detected!")
+        for c in conflicts:
+            print(f"  {c}")
+    else:
+        print("\nNo scheduling conflicts detected.")
 
 
 if __name__ == '__main__':
