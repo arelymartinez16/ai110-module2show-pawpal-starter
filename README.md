@@ -12,6 +12,8 @@
 
 This matters because real scheduling rarely works on the first try. Rather than asking the user to manually adjust task priorities or time windows when conflicts arise, the agent handles that negotiation automatically: it reads the conflict, reasons about which task should yield, takes one targeted action, and checks again just like a human planner would.
 
+Link to the demo: https://www.loom.com/share/a855d8fd9d3041bbbfc1d088e924a459
+
 ---
 
 ## Architecture Overview
