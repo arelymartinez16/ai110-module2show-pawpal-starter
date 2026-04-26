@@ -1,6 +1,8 @@
 import streamlit as st
-from datetime import time, timedelta
-from pawpal_system import Owner, Pet, Task, TimeSlot, Scheduler
+from datetime import date, time, timedelta
+from unittest.mock import patch
+from pawpal_system import Owner, Pet, Task, TimeSlot, Scheduler, Schedule, ScheduledTask
+from agent import run_agentic_schedule
 
 if "owner" not in st.session_state:
     st.session_state.owner = Owner(
@@ -155,29 +157,39 @@ if st.button("Generate schedule"):
         pets_map[pet_name_for_task].addTask(task)
 
     scheduler = Scheduler(owner=owner, pets=list(pets_map.values()))
-    schedule = scheduler.generateDailySchedule()
+
+    with st.spinner("AI agent is optimizing your schedule…"):
+        schedule, agent_log = run_agentic_schedule(scheduler)
+
     scheduled_tasks = schedule.getTasks()
 
     if not scheduled_tasks:
         st.warning("No tasks could be scheduled with current availability and preferences.")
         st.stop()
 
-    # ── Conflict warnings ─────────────────────────────────────────────────────
+    # ── Agent activity log ────────────────────────────────────────────────────
+    with st.expander("🤖 Agent activity", expanded=True):
+        for entry in agent_log:
+            before = entry["conflicts_before"]
+            label = f"**Iteration {entry['iteration']}** — {entry['summary']}"
+            if before == 0:
+                st.success(label)
+            else:
+                st.info(f"{label} *(conflicts before: {before})*")
+
+    # ── Remaining conflict warnings ───────────────────────────────────────────
     conflicts = schedule.detect_conflicts()
     if conflicts:
         st.error(
-            f"**{len(conflicts)} scheduling conflict(s) detected.** "
-            "Two or more tasks overlap — your pet may not get the care they need. "
-            "Adjust task durations, preferred periods, or owner availability to fix this."
+            f"**{len(conflicts)} conflict(s) remain after agent optimization.** "
+            "Try adjusting task durations, preferred periods, or owner availability."
         )
         for conflict in conflicts:
-            # conflict string: "Conflict: 'Walk' (Baxter) 09:00 AM-09:30 AM overlaps with ..."
             parts = conflict.removeprefix("Conflict: ").split(" overlaps with ")
             if len(parts) == 2:
                 st.warning(
                     f"**Overlap:** {parts[0].strip()}  \n"
-                    f"**conflicts with:** {parts[1].strip()}  \n"
-                    "_Tip: shorten one task or move it to a different period._"
+                    f"**conflicts with:** {parts[1].strip()}"
                 )
             else:
                 st.warning(conflict)
@@ -214,3 +226,86 @@ if st.button("Generate schedule"):
     with st.expander("Why was this schedule chosen?", expanded=False):
         explanation = schedule.explainSchedule(owner.availableTimeSlots)
         st.info(explanation)
+
+st.divider()
+st.subheader("Demo: Agent Conflict Resolution")
+st.caption(
+    "The real scheduler never produces overlapping tasks, so the agent loop never "
+    "triggers on normal inputs. This demo forces a pre-built conflict (Walk 7:00–7:30 "
+    "overlaps Feed 7:15–7:35) so you can watch K2 Think V2 resolve it live."
+)
+
+if st.button("Run conflict demo", type="primary"):
+    demo_owner = Owner(
+        name="Demo",
+        contactInfo="demo@example.com",
+        availableTimeSlots=[TimeSlot(time(7, 0), time(10, 0))],
+    )
+    demo_pet = Pet(name="Baxter", type="dog", age=3)
+    walk_task = Task(
+        name="Walk",
+        duration=timedelta(minutes=30),
+        priority=9,
+        pet=demo_pet,
+        preferredTime=TimeSlot(time(7, 0), time(8, 0)),
+    )
+    feed_task = Task(
+        name="Feed",
+        duration=timedelta(minutes=20),
+        priority=6,
+        pet=demo_pet,
+        preferredTime=TimeSlot(time(7, 0), time(8, 0)),
+    )
+    demo_pet.addTask(walk_task)
+    demo_pet.addTask(feed_task)
+    demo_scheduler = Scheduler(owner=demo_owner, pets=[demo_pet])
+
+    # Walk 7:00–7:30 overlaps Feed 7:15–7:35
+    conflict_sched = Schedule(date=date.today())
+    conflict_sched.addScheduledTask(
+        ScheduledTask(task=walk_task, startTime=time(7, 0), endTime=time(7, 30))
+    )
+    conflict_sched.addScheduledTask(
+        ScheduledTask(task=feed_task, startTime=time(7, 15), endTime=time(7, 35))
+    )
+
+    # First call returns the pre-built conflict; later calls use the real scheduler
+    # so the agent's modifications (relax preferred time, lower priority) take effect.
+    real_generate = demo_scheduler.generateDailySchedule
+    first_call = [True]
+
+    def _first_conflicting_then_real():
+        if first_call[0]:
+            first_call[0] = False
+            return conflict_sched
+        return real_generate()
+
+    with patch.object(demo_scheduler, "generateDailySchedule", side_effect=_first_conflicting_then_real):
+        with st.spinner("AI agent resolving conflict…"):
+            demo_schedule, demo_log = run_agentic_schedule(demo_scheduler)
+
+    with st.expander("🤖 Agent activity (demo)", expanded=True):
+        for entry in demo_log:
+            before = entry["conflicts_before"]
+            label = f"**Iteration {entry['iteration']}** — {entry['summary']}"
+            if before == 0:
+                st.success(label)
+            else:
+                st.info(f"{label} *(conflicts before: {before})*")
+
+    demo_tasks = demo_schedule.getTasks()
+    if demo_tasks:
+        st.markdown("### Demo Schedule (after agent)")
+        st.table([
+            {
+                "Time": (
+                    f"{dt.startTime.strftime('%I:%M %p')} – "
+                    f"{dt.endTime.strftime('%I:%M %p')}"
+                ),
+                "Pet": dt.task.pet.name,
+                "Task": dt.task.name,
+                "Priority": dt.task.priority,
+                "Duration": f"{int(dt.task.duration.total_seconds() // 60)} min",
+            }
+            for dt in demo_tasks
+        ])
